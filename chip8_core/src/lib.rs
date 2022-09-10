@@ -68,6 +68,16 @@ impl Machine {
         new_machine
     }
 
+    pub fn load(&mut self, data: &[u8]) {
+        let start = START_ADDR as usize;
+        let end = START_ADDR as usize + data.len();
+        self.ram[start..end].copy_from_slice(data);
+    }
+
+    pub fn get_display(&self) -> &[bool] {
+        &self.screen
+    }
+
     pub fn reset(&mut self) {
         self.pc = START_ADDR;
         self.ram = [0; RAM_SIZE];
@@ -107,14 +117,18 @@ impl Machine {
         }
     }
 
+    pub fn keypress(&mut self, index: usize, pressed: bool) {
+        self.keys[index] = pressed;
+    }
+
     pub fn tick(&mut self) {
         // Fetch
-        let op = self.fecth();
+        let op = self.fetch();
         // Decode & execute
         self.execute(op);
     }
 
-    fn fecth(&mut self) -> u16 {
+    fn fetch(&mut self) -> u16 {
         let higher_byte = self.ram[self.pc as usize] as u16;
         let lower_byte = self.ram[(self.pc + 1) as usize] as u16;
         self.pc += 2;
@@ -126,7 +140,7 @@ impl Machine {
         let byte1 = (op & 0xF000) >> 12;
         let byte2 = (op & 0x0F00) >> 8;
         let byte3 = (op & 0x00F0) >> 4;
-        let byte4 = (op & 0x000F) >> 2;
+        let byte4 = op & 0x000F;
 
         match (byte1, byte2, byte3, byte4) {
             (0, 0, 0xE, 0) => self.screen = [false; SCREEN_WIDTH * SCREEN_HEIGHT],
@@ -138,6 +152,11 @@ impl Machine {
             }
             (3, _, _, _) => {
                 if self.v_reg[byte2 as usize] == (op & 0xFF) as u8 {
+                    self.pc += 2
+                }
+            }
+            (4, _, _, _) => {
+                if self.v_reg[byte2 as usize] != (op & 0xFF) as u8 {
                     self.pc += 2
                 }
             }
@@ -167,7 +186,7 @@ impl Machine {
                 (self.v_reg[byte2 as usize], borrow) =
                     self.v_reg[byte2 as usize].overflowing_sub(self.v_reg[byte3 as usize]);
 
-                self.v_reg[0xF] = if borrow { 1 } else { 0 };
+                self.v_reg[0xF] = if borrow { 0 } else { 1 };
             }
             (8, _, _, 6) => {
                 self.v_reg[0xF] = self.v_reg[byte2 as usize] & 1;
@@ -189,7 +208,7 @@ impl Machine {
                     self.pc += 2
                 }
             }
-            (0xA, 0, 0, 0) => self.i_reg = op & 0xFFF,
+            (0xA, _, _, _) => self.i_reg = op & 0xFFF,
             (0xB, _, _, _) => self.pc = (self.v_reg[0] as u16) + (op & 0xFFF),
             (0xC, _, _, _) => self.v_reg[byte2 as usize] = random::<u8>() & (op & 0xFF) as u8,
             (0xD, _, _, _) => {
@@ -199,10 +218,11 @@ impl Machine {
                 let mut flipped = false;
 
                 for j in 0..byte4 {
-                    let pixels = self.ram[(self.i_reg + j) as usize];
+                    let addr = self.i_reg + j as u16;
+                    let pixels = self.ram[addr as usize];
 
                     for i in 0..8 {
-                        if pixels & (0b10000000 >> i) != 0 {
+                        if (pixels & (0b1000_0000 >> i)) != 0 {
                             let x = (x_start + i) as usize % SCREEN_WIDTH;
                             let y = (y_start + j) as usize % SCREEN_HEIGHT;
 
@@ -249,7 +269,8 @@ impl Machine {
             (0xF, _, 3, 3) => {
                 let mut vx = self.v_reg[byte2 as usize];
                 for i in 0..3 {
-                    self.ram[(self.i_reg + (3 - i)) as usize] = vx % 10;
+                    let tmp = vx % 10;
+                    self.ram[(self.i_reg + (2 - i)) as usize] = tmp;
                     vx /= 10;
                 }
             }
